@@ -1,58 +1,50 @@
-/* ============================================
+/* =============================================
    AI TEXT SHRINKER — app.js
-   Powered by Groq API (llama-3.3-70b-versatile)
-   ============================================ */
+   Frontend logic. API calls go to /api/shrink
+   (our own Express server), which securely
+   forwards them to Groq with the secret key.
+   ============================================= */
 
-// ── YOUR GROQ API KEY ──────────────────────
-// Get your free key at: https://console.groq.com/keys
-// WARNING: For production, move this to a backend proxy.
-const GROQ_API_KEY = 'YOUR_GROQ_API_KEY_HERE';
-const GROQ_MODEL   = 'llama-3.3-70b-versatile';
-// Other Groq models you can swap in:
-// 'llama-3.1-8b-instant'   — ultra fast, lower cost
-// 'mixtral-8x7b-32768'     — large 32k context window
-// 'gemma2-9b-it'           — Google Gemma 2
+// ── DOM References ──────────────────────────
+const inputEl       = document.getElementById('inputText');
+const outputEl      = document.getElementById('outputArea');
+const inputCountEl  = document.getElementById('inputCount');
+const outputCountEl = document.getElementById('outputCount');
+const shrinkBtn     = document.getElementById('shrinkBtn');
+const lengthSelect  = document.getElementById('lengthSelect');
+const customGroup   = document.getElementById('customWrapGroup');
+const toneGroup     = document.getElementById('toneGroup');
+const wordSlider    = document.getElementById('wordSlider');
+const sliderVal     = document.getElementById('sliderVal');
+const statsRow      = document.getElementById('statsRow');
+const barWrap       = document.getElementById('barWrap');
 
-// ── DOM References ─────────────────────────
-const inputEl        = document.getElementById('inputText');
-const outputEl       = document.getElementById('outputArea');
-const inputCountEl   = document.getElementById('inputCount');
-const outputCountEl  = document.getElementById('outputCount');
-const shrinkBtn      = document.getElementById('shrinkBtn');
-const lengthSelect   = document.getElementById('lengthSelect');
-const customGroup    = document.getElementById('customWrapGroup');
-const toneGroup      = document.getElementById('toneGroup');
-const wordSlider     = document.getElementById('wordSlider');
-const sliderVal      = document.getElementById('sliderVal');
-const statsRow       = document.getElementById('statsRow');
-const barWrap        = document.getElementById('barWrap');
+let abortController = null;
 
-let abortController  = null;
-
-// ── Utility ────────────────────────────────
+// ── Utility ─────────────────────────────────
 function countWords(text) {
   return text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
 }
 
-// ── Live Word Count (input) ─────────────────
+// ── Live word count ──────────────────────────
 inputEl.addEventListener('input', () => {
   const w = countWords(inputEl.value);
   inputCountEl.textContent = w + ' word' + (w !== 1 ? 's' : '');
 });
 
-// ── Slider sync ────────────────────────────
+// ── Slider sync ──────────────────────────────
 wordSlider.addEventListener('input', () => {
   sliderVal.textContent = wordSlider.value;
 });
 
-// ── Length select: show/hide custom slider ──
+// ── Toggle custom word count slider ─────────
 lengthSelect.addEventListener('change', () => {
   const isCustom = lengthSelect.value === 'custom';
   customGroup.style.display = isCustom ? 'block' : 'none';
   toneGroup.style.display   = isCustom ? 'none'  : 'block';
 });
 
-// ── Preset tag click: load sample text ─────
+// ── Sample preset tags ───────────────────────
 document.querySelectorAll('.tag').forEach(tag => {
   tag.addEventListener('click', () => {
     inputEl.value = tag.dataset.text;
@@ -60,7 +52,21 @@ document.querySelectorAll('.tag').forEach(tag => {
   });
 });
 
-// ── Build the AI prompt ─────────────────────
+// ── Show / hide API key (if key bar present) ─
+function toggleKeyVisibility() {
+  const input   = document.getElementById('groqApiKey');
+  const eyeIcon = document.getElementById('eyeIcon');
+  if (!input) return;
+  if (input.type === 'password') {
+    input.type       = 'text';
+    eyeIcon.className = 'ti ti-eye-off';
+  } else {
+    input.type       = 'password';
+    eyeIcon.className = 'ti ti-eye';
+  }
+}
+
+// ── Build the AI prompt ──────────────────────
 function buildPrompt() {
   const text   = inputEl.value.trim();
   const mode   = document.getElementById('modeSelect').value;
@@ -69,7 +75,7 @@ function buildPrompt() {
 
   const modeInstructions = {
     summarize: 'Summarize the following text, preserving the core meaning and most important points.',
-    compress:  'Compress the following text, keeping the same structure and key details but removing redundancy and filler.',
+    compress:  'Compress the following text, keeping the same structure and key details but removing all redundancy and filler.',
     bullets:   'Convert the following text into concise, clear bullet points.',
     tldr:      'Write a TL;DR of 1–2 sentences maximum for the following text.',
     keywords:  'Extract only the most important key phrases and concepts from the following text as a comma-separated list.',
@@ -93,45 +99,41 @@ function buildPrompt() {
   );
 }
 
-// ── Main shrink function (streaming) ────────
+// ── Main shrink function (streaming) ─────────
 async function shrinkText() {
-  const text = inputEl.value.trim();
+  const text  = inputEl.value.trim();
+  const model = document.getElementById('modelSelect')?.value || 'llama-3.3-70b-versatile';
 
   if (!text) {
     outputEl.innerHTML = '<span class="output-placeholder" style="color:var(--danger)">Please enter some text first.</span>';
     return;
   }
 
-  if (!GROQ_API_KEY || GROQ_API_KEY === 'YOUR_GROQ_API_KEY_HERE') {
-    outputEl.innerHTML = '<span style="color:var(--danger)"><i class="ti ti-key"></i> Please open app.js and set your GROQ_API_KEY. Get one free at console.groq.com/keys</span>';
-    return;
-  }
-
+  // Cancel any in-flight request
   if (abortController) abortController.abort();
   abortController = new AbortController();
 
-  shrinkBtn.disabled    = true;
-  shrinkBtn.innerHTML   = '<span class="spinner"></span> Shrinking…';
-  outputEl.textContent  = '';
+  // Loading state
+  shrinkBtn.disabled        = true;
+  shrinkBtn.innerHTML       = '<span class="spinner"></span> Shrinking…';
+  outputEl.textContent      = '';
   outputCountEl.textContent = '…';
-  statsRow.style.display = 'none';
-  barWrap.style.display  = 'none';
+  statsRow.style.display    = 'none';
+  barWrap.style.display     = 'none';
 
   let fullOutput = '';
 
   try {
-    // ── Groq API — OpenAI-compatible endpoint ──
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-      },
+    // ── POST to our own backend proxy (/api/shrink)
+    // The server adds the Groq API key and forwards to Groq.
+    const response = await fetch('/api/shrink', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model:       GROQ_MODEL,
+        model,
         max_tokens:  1024,
         stream:      true,
-        temperature: 0.4,   // lower = more focused/consistent output
+        temperature: 0.4,
         messages: [
           {
             role:    'system',
@@ -151,7 +153,7 @@ async function shrinkText() {
       throw new Error(err?.error?.message || `HTTP ${response.status}`);
     }
 
-    // ── Stream SSE chunks (OpenAI-compatible format) ──
+    // ── Parse the SSE stream ─────────────────
     const reader  = response.body.getReader();
     const decoder = new TextDecoder();
 
@@ -160,9 +162,7 @@ async function shrinkText() {
       if (done) break;
 
       const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n');
-
-      for (const line of lines) {
+      for (const line of chunk.split('\n')) {
         if (!line.startsWith('data: ')) continue;
         const data = line.slice(6).trim();
         if (data === '[DONE]') break;
@@ -176,9 +176,7 @@ async function shrinkText() {
             const w = countWords(fullOutput);
             outputCountEl.textContent = w + ' word' + (w !== 1 ? 's' : '');
           }
-        } catch (_) {
-          // Skip malformed SSE lines
-        }
+        } catch (_) { /* skip malformed lines */ }
       }
     }
 
@@ -196,11 +194,11 @@ async function shrinkText() {
   }
 }
 
-// ── Stats panel update ──────────────────────
+// ── Stats display ─────────────────────────────
 function showStats(original, output) {
-  const wIn  = countWords(original);
-  const wOut = countWords(output);
-  const pct  = wIn > 0 ? Math.round((1 - wOut / wIn) * 100) : 0;
+  const wIn       = countWords(original);
+  const wOut      = countWords(output);
+  const pct       = wIn > 0 ? Math.round((1 - wOut / wIn) * 100) : 0;
   const charsSaved = Math.max(0, original.length - output.length);
 
   document.getElementById('statIn').textContent    = wIn;
@@ -210,12 +208,12 @@ function showStats(original, output) {
   statsRow.style.display = 'grid';
 
   const barPct = Math.min(100, Math.max(0, pct));
-  document.getElementById('barPct').textContent  = barPct + '%';
-  document.getElementById('barFill').style.width = barPct + '%';
+  document.getElementById('barPct').textContent    = barPct + '%';
+  document.getElementById('barFill').style.width   = barPct + '%';
   barWrap.style.display = 'block';
 }
 
-// ── Copy output to clipboard ────────────────
+// ── Copy output ───────────────────────────────
 function copyOutput() {
   const text = outputEl.textContent;
   if (!text || text.includes('Your shrunken text')) return;
@@ -225,6 +223,7 @@ function copyOutput() {
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 2200);
   }).catch(() => {
+    // Older browser fallback
     const ta = document.createElement('textarea');
     ta.value = text;
     document.body.appendChild(ta);
@@ -234,7 +233,7 @@ function copyOutput() {
   });
 }
 
-// ── Clear everything ────────────────────────
+// ── Clear everything ──────────────────────────
 function clearAll() {
   inputEl.value             = '';
   outputEl.innerHTML        = '<span class="output-placeholder">Your shrunken text will appear here…</span>';
@@ -244,7 +243,7 @@ function clearAll() {
   barWrap.style.display     = 'none';
 }
 
-// ── Keyboard shortcut: Ctrl/Cmd + Enter ─────
+// ── Keyboard shortcut: Ctrl/Cmd + Enter ──────
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') shrinkText();
 });
