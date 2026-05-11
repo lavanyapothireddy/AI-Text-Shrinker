@@ -1,8 +1,17 @@
 /* ============================================
    AI TEXT SHRINKER — app.js
-   All logic: word counting, prompt building,
-   Anthropic API streaming, stats, UI updates.
+   Powered by Groq API (llama-3.3-70b-versatile)
    ============================================ */
+
+// ── YOUR GROQ API KEY ──────────────────────
+// Get your free key at: https://console.groq.com/keys
+// WARNING: For production, move this to a backend proxy.
+const GROQ_API_KEY = 'YOUR_GROQ_API_KEY_HERE';
+const GROQ_MODEL   = 'llama-3.3-70b-versatile';
+// Other Groq models you can swap in:
+// 'llama-3.1-8b-instant'   — ultra fast, lower cost
+// 'mixtral-8x7b-32768'     — large 32k context window
+// 'gemma2-9b-it'           — Google Gemma 2
 
 // ── DOM References ─────────────────────────
 const inputEl        = document.getElementById('inputText');
@@ -18,7 +27,7 @@ const sliderVal      = document.getElementById('sliderVal');
 const statsRow       = document.getElementById('statsRow');
 const barWrap        = document.getElementById('barWrap');
 
-let abortController  = null;   // allows cancelling in-flight requests
+let abortController  = null;
 
 // ── Utility ────────────────────────────────
 function countWords(text) {
@@ -58,7 +67,6 @@ function buildPrompt() {
   const tone   = document.getElementById('toneSelect').value;
   const length = lengthSelect.value;
 
-  // Mode-specific instructions
   const modeInstructions = {
     summarize: 'Summarize the following text, preserving the core meaning and most important points.',
     compress:  'Compress the following text, keeping the same structure and key details but removing redundancy and filler.',
@@ -69,13 +77,11 @@ function buildPrompt() {
     casual:    'Rewrite the following text in a casual, friendly tone but much shorter.',
   };
 
-  // Length instruction
   let lengthInstruction = '';
   if (length === 'shortest')    lengthInstruction = 'Make it as short as possible.';
   else if (length === 'custom') lengthInstruction = `Target approximately ${wordSlider.value} words.`;
   else                          lengthInstruction = `Target approximately ${length}% of the original length.`;
 
-  // Tone instruction (skip for rewrite modes that already set tone)
   const toneInstruction = (mode !== 'formal' && mode !== 'casual' && tone !== 'neutral')
     ? `Write in a ${tone} tone.`
     : '';
@@ -91,17 +97,19 @@ function buildPrompt() {
 async function shrinkText() {
   const text = inputEl.value.trim();
 
-  // Guard: need input text
   if (!text) {
     outputEl.innerHTML = '<span class="output-placeholder" style="color:var(--danger)">Please enter some text first.</span>';
     return;
   }
 
-  // Cancel any previous request
+  if (!GROQ_API_KEY || GROQ_API_KEY === 'YOUR_GROQ_API_KEY_HERE') {
+    outputEl.innerHTML = '<span style="color:var(--danger)"><i class="ti ti-key"></i> Please open app.js and set your GROQ_API_KEY. Get one free at console.groq.com/keys</span>';
+    return;
+  }
+
   if (abortController) abortController.abort();
   abortController = new AbortController();
 
-  // UI: loading state
   shrinkBtn.disabled    = true;
   shrinkBtn.innerHTML   = '<span class="spinner"></span> Shrinking…';
   outputEl.textContent  = '';
@@ -112,20 +120,28 @@ async function shrinkText() {
   let fullOutput = '';
 
   try {
-    // ── Call Anthropic API (streaming) ──────
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    // ── Groq API — OpenAI-compatible endpoint ──
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        // NOTE: In production, proxy this through your own backend.
-        // Never expose API keys in frontend code.
-        // If using Claude.ai artifacts, the key is injected automatically.
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model:      'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        stream:     true,
-        messages:   [{ role: 'user', content: buildPrompt() }]
+        model:       GROQ_MODEL,
+        max_tokens:  1024,
+        stream:      true,
+        temperature: 0.4,   // lower = more focused/consistent output
+        messages: [
+          {
+            role:    'system',
+            content: 'You are a precise text compression assistant. Always output ONLY the result — never add preamble, labels, or explanations. Follow the user instructions exactly.'
+          },
+          {
+            role:    'user',
+            content: buildPrompt()
+          }
+        ]
       }),
       signal: abortController.signal
     });
@@ -135,7 +151,7 @@ async function shrinkText() {
       throw new Error(err?.error?.message || `HTTP ${response.status}`);
     }
 
-    // ── Stream SSE chunks ────────────────────
+    // ── Stream SSE chunks (OpenAI-compatible format) ──
     const reader  = response.body.getReader();
     const decoder = new TextDecoder();
 
@@ -153,21 +169,19 @@ async function shrinkText() {
 
         try {
           const parsed = JSON.parse(data);
-          if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-            fullOutput += parsed.delta.text;
+          const delta  = parsed?.choices?.[0]?.delta?.content;
+          if (delta) {
+            fullOutput += delta;
             outputEl.textContent = fullOutput;
-
-            // Live word count in panel header
             const w = countWords(fullOutput);
             outputCountEl.textContent = w + ' word' + (w !== 1 ? 's' : '');
           }
         } catch (_) {
-          // Silently skip malformed SSE lines
+          // Skip malformed SSE lines
         }
       }
     }
 
-    // ── Show stats after stream completes ───
     if (fullOutput) showStats(text, fullOutput);
 
   } catch (err) {
@@ -195,10 +209,9 @@ function showStats(original, output) {
   document.getElementById('statChars').textContent = charsSaved;
   statsRow.style.display = 'grid';
 
-  // Compression bar
   const barPct = Math.min(100, Math.max(0, pct));
-  document.getElementById('barPct').textContent      = barPct + '%';
-  document.getElementById('barFill').style.width     = barPct + '%';
+  document.getElementById('barPct').textContent  = barPct + '%';
+  document.getElementById('barFill').style.width = barPct + '%';
   barWrap.style.display = 'block';
 }
 
@@ -212,7 +225,6 @@ function copyOutput() {
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 2200);
   }).catch(() => {
-    // Fallback for older browsers
     const ta = document.createElement('textarea');
     ta.value = text;
     document.body.appendChild(ta);
