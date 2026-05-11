@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Text Shrinker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="logo-icon"><i class="ti ti-minimize"></i></div>
+    <div class="header-text">
+      <h1>AI Text Shrinker</h1>
+      <p>Compress, summarize, and distill any text with AI</p>
+    </div>
+  </div>
+
+  <!-- CONTROLS ROW -->
+  <div class="controls-row">
+    <div class="control-group">
+      <label>Mode</label>
+      <select id="modeSelect">
+        <option value="summarize">Summarize</option>
+        <option value="compress">Compress (keep structure)</option>
+        <option value="bullets">Bullet points</option>
+        <option value="tldr">TL;DR (1–2 sentences)</option>
+        <option value="keywords">Key phrases only</option>
+        <option value="formal">Formal rewrite, shorter</option>
+        <option value="casual">Casual rewrite, shorter</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>Target length</label>
+      <select id="lengthSelect">
+        <option value="shortest">Shortest possible</option>
+        <option value="25">~25% of original</option>
+        <option value="50" selected>~50% of original</option>
+        <option value="75">~75% of original</option>
+        <option value="custom">Custom word count…</option>
+      </select>
+    </div>
+
+    <div class="control-group" id="customWrapGroup" style="display:none">
+      <label>Word count target</label>
+      <div class="slider-wrap">
+        <input type="range" id="wordSlider" min="10" max="500" value="100" />
+        <span class="slider-val" id="sliderVal">100</span>
+      </div>
+    </div>
+
+    <div class="control-group" id="toneGroup">
+      <label>Tone</label>
+      <select id="toneSelect">
+        <option value="neutral">Neutral</option>
+        <option value="professional">Professional</option>
+        <option value="simple">Simple / Plain</option>
+        <option value="academic">Academic</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- SAMPLE TEXT PRESETS -->
+  <div class="tag-row" id="presetTags">
+    <span class="tag" data-text="The quick brown fox jumps over the lazy dog. This is a classic pangram used in typography and font testing. The sentence is notable for containing every letter of the English alphabet at least once while remaining grammatically correct. Typographers have used it for centuries to display font samples and test typewriters and computer keyboards.">Try: Pangram</span>
+    <span class="tag" data-text="Artificial intelligence (AI) is intelligence demonstrated by machines, as opposed to the natural intelligence displayed by animals including humans. AI research has been defined as the field of study of intelligent agents, which refers to any system that perceives its environment and takes actions that maximize its chance of achieving its goals. The term is frequently applied to machines that mimic cognitive functions that humans associate with the human mind, such as learning and problem solving.">Try: AI Definition</span>
+    <span class="tag" data-text="Climate change refers to long-term shifts in temperatures and weather patterns. These shifts may be natural, such as through variations in the solar cycle. But since the 1800s, human activities have been the main driver of climate change, primarily due to burning fossil fuels like coal, oil and gas. Burning fossil fuels generates greenhouse gas emissions that act like a blanket wrapped around the Earth, trapping the sun's heat and raising temperatures.">Try: Climate Change</span>
+    <span class="tag" data-text="The human brain is the most complex organ in the body and arguably the most remarkable. It contains approximately 86 billion neurons, and each neuron can form up to 10,000 connections to other neurons, yielding some 100 trillion neural connections. This vast network is responsible for all conscious experience, behavior, emotions, and cognitive function. The brain is divided into regions with specialized functions: the cerebral cortex handles higher-level thought, the limbic system manages emotions, and the brainstem controls basic life functions.">Try: Human Brain</span>
+  </div>
+
+  <!-- EDITOR PANELS -->
+  <div class="editor-grid">
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title"><i class="ti ti-file-text"></i> Original text</span>
+        <span class="char-count" id="inputCount">0 words</span>
+      </div>
+      <textarea id="inputText" placeholder="Paste or type your text here…"></textarea>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title"><i class="ti ti-minimize"></i> Shrunken output</span>
+        <span class="char-count" id="outputCount">—</span>
+      </div>
+      <div class="output-area" id="outputArea">
+        <span class="output-placeholder">Your shrunken text will appear here…</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ACTION BUTTONS -->
+  <div class="action-row">
+    <button class="btn-shrink" id="shrinkBtn" onclick="shrinkText()">
+      <i class="ti ti-wand"></i> Shrink It
+    </button>
+    <button class="btn-icon" onclick="copyOutput()" title="Copy output">
+      <i class="ti ti-copy"></i>
+    </button>
+    <button class="btn-icon" onclick="clearAll()" title="Clear all">
+      <i class="ti ti-trash"></i>
+    </button>
+  </div>
+
+  <!-- STATS CARDS -->
+  <div class="stats-row" id="statsRow" style="display:none">
+    <div class="stat-card">
+      <div class="stat-val" id="statIn">0</div>
+      <div class="stat-label">Original words</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="statOut">0</div>
+      <div class="stat-label">Output words</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="statPct">0%</div>
+      <div class="stat-label">Reduction</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="statChars">0</div>
+      <div class="stat-label">Chars saved</div>
+    </div>
+  </div>
+
+  <!-- COMPRESSION BAR -->
+  <div id="barWrap" style="display:none" class="reduction-bar-wrap">
+    <div class="reduction-bar-label">
+      <span>Compression ratio</span>
+      <span id="barPct">0%</span>
+    </div>
+    <div class="reduction-bar-track">
+      <div class="reduction-bar-fill" id="barFill" style="width:0%"></div>
+    </div>
+  </div>
+
+</div><!-- /.app -->
+
+<!-- TOAST NOTIFICATION -->
+<div class="toast" id="toast"><i class="ti ti-check"></i> Copied to clipboard!</div>
+
+<script src="app.js"></script>
+</body>
+</html>
